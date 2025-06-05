@@ -1,5 +1,13 @@
 #include "show.h"
 
+// 在文件作用域定义（show.c 顶部或底部）
+static void dummy_page_flip_handler(int fd, unsigned int sequence, unsigned int q,
+                                   unsigned int tv_sec, void *data) 
+{
+    // 这是一个空实现，什么也不做
+    (void)fd; (void)sequence; (void)tv_sec; (void)data;
+}
+
 int drm_nv12_init(struct mydisplay* mydis)  // 初始化显示
 {
     // 1. 初始化显示
@@ -8,18 +16,26 @@ int drm_nv12_init(struct mydisplay* mydis)  // 初始化显示
         fprintf(stderr, "Display初始化失败\n");
         goto error;
     }
-    // 2. 获取支持NV12的plane
+    mydis->disp->drm_event_ctx.page_flip_handler = dummy_page_flip_handler;
+    // 2. 获取NV12格式的plane
     mydis->plane = display_get_plane( mydis->disp, DRM_FORMAT_NV12);
     if (!mydis->plane) {
         fprintf(stderr, "没有NV12 plane可用\n");
         goto error;
     }
-    // 3. 预分配显示缓冲区（避免频繁分配释放）
-    mydis->disp_buf = display_allocate_buffer( mydis->plane, 480, 800);
-    if (!mydis->disp_buf) {
-        fprintf(stderr, "分配显示缓冲区失败\n");
-        goto error;
-    }   
+    // 3. 预分配显示缓冲区（双缓冲）
+    for( int i = 0; i < 3; i++) {
+        mydis->disp_buf[i] = display_allocate_buffer( mydis->plane, 480, 800);
+        if (!mydis->disp_buf[i]) {
+            fprintf(stderr, "分配显示缓冲区%u失败\n",i);
+            goto error;
+        }
+    }
+    // 4. 初始提交第一个缓冲
+    mydis->disp_buf_index = 0;  // 初始化显示缓冲区索引为0
+    display_commit_buffer(mydis->disp_buf[0], 0, 0);
+    
+    
     // 2. 分配处理帧缓冲区（480x800的NV12格式） LCD显示
     mydis->process_frame = malloc(mydis->width*mydis->height * 3 / 2);
     if (! mydis->process_frame) {
@@ -34,9 +50,11 @@ error:
 
 void mydisplay_destroy(struct mydisplay* mydis) {
     if (!mydis) return;  // 检查指针有效性
-    if (mydis->disp_buf) {
-        display_free_buffer(mydis->disp_buf);  // 释放显示缓冲区
-        mydis->disp_buf = NULL;  // 清空指针
+    for( int i = 0; i < 3; i++) {
+        if (mydis->disp_buf[i]) {
+            display_free_buffer(mydis->disp_buf[i]);  // 释放显示缓冲区
+            mydis->disp_buf[i] = NULL;  // 清空指针
+        }
     }
     if (mydis->plane) {
         display_free_plane(mydis->plane);  // 释放显示平面

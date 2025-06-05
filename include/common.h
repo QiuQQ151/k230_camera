@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdatomic.h>   // 用于原子操作
 #include <termios.h>
 #include <unistd.h>
 #include <math.h>
