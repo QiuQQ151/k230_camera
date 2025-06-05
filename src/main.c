@@ -76,7 +76,7 @@ int main() {
 
     // 初始化摄像头
     struct v4l2_capture cam = {0};
-    if (v4l2_init(&cam, CAM_DEV, 1920, 1080)) {
+    if ( v4l2_init( &cam, CAM_DEV, 1920, 1080, 3)) {
         fprintf(stderr, "V4L2初始化失败\n");
         mydisplay_destroy(&mydisp);
         return EXIT_FAILURE;
@@ -144,7 +144,6 @@ int main() {
             perror("出队失败");
             break;
         }
-        
         uint8_t *cam_data = (uint8_t*)cam.buffers[buf.index].start;
         
         // 视频显示处理
