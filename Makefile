@@ -32,6 +32,7 @@ COMMON_FLAGS += -I$(STAGING_DIR)/usr/include/libdrm
 COMMON_FLAGS += -I$(STAGING_DIR)/usr/include/drm
 COMMON_FLAGS += -I$(STAGING_DIR)/usr/include/ai_demo_common
 COMMON_FLAGS += -I$(STAGING_DIR)/usr/include/nncase
+COMMON_FLAGS += -I$(STAGING_DIR)/usr/include/vvcam/isp
 COMMON_FLAGS += -MMD -MP
 
 CFLAGS := $(COMMON_FLAGS) -std=gnu11

@@ -12,9 +12,11 @@
 #include <math.h>
 #include <time.h>
 #include <pthread.h>
-
+#include <riscv_vector.h>
+#include <stddef.h>
 
 #include <linux/videodev2.h>
+#include <linux/fb.h>
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 #include <libswscale/swscale.h>

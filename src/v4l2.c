@@ -10,7 +10,7 @@
 * @return: 0 成功, -1 失败  
 */
 int v4l2_init(struct v4l2_capture *vcap, const char *dev, uint32_t width, uint32_t height, uint32_t buffer_count) {
-    if(!vcap || !dev || width == 0 || height == 0 || buffer_count < 2) {
+    if(!vcap || !dev || width == 0 || height == 0 || buffer_count < 3) {
         fprintf(stderr, "无效的参数\n");
         return -1;
     }
@@ -49,6 +49,13 @@ int v4l2_init(struct v4l2_capture *vcap, const char *dev, uint32_t width, uint32
         perror("设置格式失败");
         goto error;
     }
+    // 查询实际的采集尺寸
+    fprintf(stderr, "设置采集格式: %ux%u, 像素格式: %c%c%c%c\n", 
+            fmt.fmt.pix.width, fmt.fmt.pix.height,
+            (fmt.fmt.pix.pixelformat >> 0) & 0xFF,
+            (fmt.fmt.pix.pixelformat >> 8) & 0xFF,
+            (fmt.fmt.pix.pixelformat >> 16) & 0xFF,
+            (fmt.fmt.pix.pixelformat >> 24) & 0xFF);
     vcap->pitch = fmt.fmt.pix.bytesperline;// 更新行步长，用于后期解码
     fprintf(stderr, "摄像头行步长: %u bytes\n", vcap->pitch);
 
