@@ -16,6 +16,7 @@ typedef struct {
     pthread_mutex_t mutex;             // 互斥锁
     pthread_cond_t cond;               // 条件变量
     bool isready;                      // 就绪标志 // 有帧在处理时为false，无时为true
+    bool exit_flag;
     struct mydisplay* det_disp;        // 显示设备
     uint8_t* frame_copy;               // 待检测数据
     int frame_width;
@@ -27,11 +28,23 @@ void* detection_thread(void* arg) {
     ThreadData* data = (ThreadData*)arg;
     while (1) {
         pthread_mutex_lock(&data->mutex);  // 上锁
+        // 退出检查
+        if( data->exit_flag){
+            pthread_mutex_unlock(&data->mutex);
+            break;
+        }
+
         // 等待任务唤醒
-        while (data->isready) {
+        while (data->isready && !data->exit_flag ) {
             pthread_cond_wait(&data->cond, &data->mutex);
         }
-        pthread_mutex_unlock(&data->mutex); // 释放锁
+
+        // 二次检查：唤醒后立即检查退出标志
+        if (data->exit_flag) {
+            pthread_mutex_unlock(&data->mutex);
+            break;
+        }
+        pthread_mutex_unlock(&data->mutex); 
         
         // 执行检测
         clear_box(data->det_disp); // 清除方框显示
@@ -101,6 +114,7 @@ int main() {
     // 初始化线程数据
     ThreadData thread_data = {
         .isready = true,
+        .exit_flag = false,
         .det_disp = &mydisp,
         .frame_copy = malloc(camera_width * camera_height * 3 / 2), //NV12
         .frame_width = camera_width,
@@ -214,6 +228,7 @@ int main() {
     }
     // 清理线程
     pthread_mutex_lock(&thread_data.mutex);  // 
+    thread_data.exit_flag = true;   // 通知线程退出
     thread_data.isready = false;
     pthread_cond_signal(&thread_data.cond); // 
     pthread_mutex_unlock(&thread_data.mutex); //
