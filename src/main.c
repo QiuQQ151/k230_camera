@@ -5,62 +5,47 @@
 #define CAM_DEV     "/dev/video1"  // 摄像头设备路径
 #define OUTPUT_FILE "./video/output.mp4"  // 视频输出文件名
 #define FPS 60         // 设置帧率
-#define BUFFER_SIZE 3  // 环形缓冲区大小
 #define camera_width 800
 #define camera_height 480
-typedef struct {
-    uint8_t *data;      // 帧数据指针
-    int index;          // 缓冲区索引
-    int width;          // 帧宽度
-    int height;         // 帧高度
-    int processed;      // 是否已处理标志
-} FrameBuffer;
+
+
+// 检测线程的数据---------------------------------------------------------
+
 
 typedef struct {
-    FrameBuffer buffers[BUFFER_SIZE];  // 环形缓冲区
-    int write_idx;                     // 写入位置
-    int read_idx;                      // 读取位置
-    int count;                         // 当前帧数
     pthread_mutex_t mutex;             // 互斥锁
     pthread_cond_t cond;               // 条件变量
-    int shutdown;                      // 终止标志
-    struct mydisplay* det_disp;           // 显示设备
+    bool isready;                      // 就绪标志 // 有帧在处理时为false，无时为true
+    struct mydisplay* det_disp;        // 显示设备
+    uint8_t* frame_copy;               // 待检测数据
+    int frame_width;
+    int frame_height;    
 } ThreadData;
 
 // 检测线程函数
 void* detection_thread(void* arg) {
     ThreadData* data = (ThreadData*)arg;
-    
     while (1) {
-        pthread_mutex_lock(&data->mutex);
-        
-        // 等待有可处理帧或终止信号
-        while (data->count == 0 && !data->shutdown) {
+        pthread_mutex_lock(&data->mutex);  // 上锁
+        // 等待任务唤醒
+        while (data->isready) {
             pthread_cond_wait(&data->cond, &data->mutex);
         }
-        
-        if (data->shutdown) {
-            pthread_mutex_unlock(&data->mutex);
-            break;
-        }
-        
-        // 获取当前帧
-        FrameBuffer *frame = &data->buffers[data->read_idx];
-        data->read_idx = (data->read_idx + 1) % BUFFER_SIZE;
-        data->count--;
-        pthread_mutex_unlock(&data->mutex);
+        pthread_mutex_unlock(&data->mutex); // 释放锁
         
         // 执行检测
-        struct all_det_location * all_location = detectframe(frame->data, frame->width, frame->height);
+        clear_box(data->det_disp); // 清除方框显示
+        struct all_det_location * all_location = detectframe(data->frame_copy, data->frame_width, data->frame_height);
         if( all_location != NULL) {
             //fprintf(stderr, "检测到 %d 个行人\n", num);
             draw_box(data->det_disp, all_location); // 绘制检测到的行人方框
-            
         }
-        else{
-           // fprintf(stderr, "未检测到行人\n");
-           clear_box(data->det_disp); // 清除方框显示
-        }
+        
+        // 任务结束，标记线程可接受新任务
+        pthread_mutex_lock(&data->mutex);
+        data->isready = true;
+        pthread_mutex_unlock(&data->mutex);       
+
     }
     return NULL;
 }
@@ -115,15 +100,24 @@ int main() {
 
     // 初始化线程数据
     ThreadData thread_data = {
-        .write_idx = 0, .read_idx = 0, .count = 0, .shutdown = 0, .det_disp = &mydisp
+        .isready = true,
+        .det_disp = &mydisp,
+        .frame_copy = malloc(camera_width * camera_height * 3 / 2), //NV12
+        .frame_width = camera_width,
+        .frame_height = camera_height
     };
-    pthread_mutex_init(&thread_data.mutex, NULL);
-    pthread_cond_init(&thread_data.cond, NULL);
+    if (!thread_data.frame_copy) {
+        fprintf(stderr, "帧缓冲区分配失败\n");
+        return EXIT_FAILURE;
+    }   
+    pthread_mutex_init(&thread_data.mutex, NULL);  // 初始化互斥锁
+    pthread_cond_init(&thread_data.cond, NULL);  
 
     // 创建检测线程
     pthread_t det_thread;
     if (pthread_create(&det_thread, NULL, detection_thread, &thread_data)) {
         fprintf(stderr, "无法创建识别线程\n");
+        free(thread_data.frame_copy);
         return EXIT_FAILURE;
     }
 
@@ -193,22 +187,15 @@ int main() {
             break;
         }
         
-        // 将帧加入检测队列（使用互斥锁保护）
-        //fprintf(stderr, "将帧加入检测队列...\n");
-        pthread_mutex_lock(&thread_data.mutex);
-        if (thread_data.count < BUFFER_SIZE) {
-            FrameBuffer *frame = &thread_data.buffers[thread_data.write_idx];
-            frame->data = cam_data;
-            frame->width = camera_width;
-            frame->height = camera_height;
-            frame->index = thread_data.write_idx;
-            
-            thread_data.write_idx = (thread_data.write_idx + 1) % BUFFER_SIZE;
-            thread_data.count++;
-            
+        // 5、线程识别
+        pthread_mutex_lock(&thread_data.mutex);  // 互斥锁
+        if (thread_data.isready ) {
+            // 复制帧到识别缓冲区
+            memcpy(thread_data.frame_copy, cam_data, camera_width * camera_height * 3 / 2);
+            thread_data.isready = false; // 标记忙
             pthread_cond_signal(&thread_data.cond);  // 唤醒检测线程
         }
-        pthread_mutex_unlock(&thread_data.mutex);
+        pthread_mutex_unlock(&thread_data.mutex); // 释放锁
 
         // 6、重新入队缓冲区
         if (ioctl(cam.fd, VIDIOC_QBUF, &buf) < 0) {
@@ -226,15 +213,18 @@ int main() {
         nanosleep(&ts, NULL);
     }
     // 清理线程
-    pthread_mutex_lock(&thread_data.mutex);
-    thread_data.shutdown = 1;
-    pthread_cond_signal(&thread_data.cond);
-    pthread_mutex_unlock(&thread_data.mutex);
+    pthread_mutex_lock(&thread_data.mutex);  // 
+    thread_data.isready = false;
+    pthread_cond_signal(&thread_data.cond); // 
+    pthread_mutex_unlock(&thread_data.mutex); //
     pthread_join(det_thread, NULL);
     pthread_mutex_destroy(&thread_data.mutex);
-    pthread_cond_destroy(&thread_data.cond);
-    destroy_person_detector();
+    pthread_cond_destroy(&thread_data.cond); 
+    free( thread_data.frame_copy);
 
+
+    destroy_person_detector(); // 销毁识别资源
+ 
     // 恢复终端设置
     tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
     
