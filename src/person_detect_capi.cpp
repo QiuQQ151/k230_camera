@@ -5,6 +5,7 @@
 #include <vector>
 #include <stdint.h>
 #include <time.h>
+#include <libyuv.h> 
 
 // 全局变量，用于保存模型实例
 static personDetect* g_pd = nullptr;
@@ -102,11 +103,7 @@ struct all_det_location* detectframe(uint8_t* nv12_data, int width, int height) 
         //fprintf(stderr, "No persons detected\n");
         return NULL;
     }
-    // 返回的结构体
-    // struct all_det_location {
-    //     struct det_location** locations; // 检测到的行人位置数组
-    //     int count; // 检测到的行人数量
-    // };
+
     // 返回的结构体
     struct all_det_location* ret_all = (struct all_det_location*) malloc( sizeof(all_det_location) );
     ret_all->count = results.size(); // 检测到的行人数量
@@ -121,8 +118,8 @@ struct all_det_location* detectframe(uint8_t* nv12_data, int width, int height) 
     for (const auto& r : results) {
         const std::string text = "person:" + std::to_string(r.score).substr(0, 4);
         // 标准化输出格式
-        printf("[Person] Box: (%.2f, %.2f) -> (%0.2f, %.2f) | Score: %.2f\n", 
-                r.x1, r.y1, r.x2, r.y2, r.score);
+        // printf("[Person] Box: (%.2f, %.2f) -> (%0.2f, %.2f) | Score: %.2f\n", 
+        //         r.x1, r.y1, r.x2, r.y2, r.score);
         // 将检测结果存入返回结构体
         ret_all->locations[i]->x1 = (int)r.x1 -1; // 左上角x坐标
         ret_all->locations[i]->y1 = (int)r.y1 -1; // 左上角y坐标   
@@ -152,7 +149,7 @@ struct all_det_location* detectframe(uint8_t* nv12_data, int width, int height) 
                 "./pic/det_%04d%02d%02d_%02d%02d%02d.jpg",
                 tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
                 tm->tm_hour, tm->tm_min, tm->tm_sec);
-        cv::imwrite(filename, ori_img);
+       // cv::imwrite(filename, ori_img); //60ms
     }
    //return results.size();
    return ret_all; // 返回检测结果位置
