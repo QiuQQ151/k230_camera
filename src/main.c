@@ -4,8 +4,8 @@
 
 #define CAM_DEV     "/dev/video1"  // 摄像头设备路径
 #define OUTPUT_FILE "./video/output.mp4"  // 视频输出文件名
-#define FPS 30         // 设置帧率
-#define camera_width 800
+#define FPS 10        // 设置帧率
+#define camera_width  800
 #define camera_height 480
 
 
@@ -13,7 +13,7 @@
 
 // 获取时间差的函数（返回纳秒）
 long get_elapsed_ns(struct timespec *start, struct timespec *end) {
-    return (end->tv_sec - start->tv_sec) * 1000000000L  + 
+    return (end->tv_sec - start->tv_sec) * 1000000000LL  + 
            (end->tv_nsec - start->tv_nsec);
 }
 
@@ -79,7 +79,8 @@ void* detection_thread(void* arg) {
 
 int main() {
 
-    struct timespec start, end; // 用于计时的结构体
+    struct timespec start, end; // 用于局部计时的结构体
+    struct timespec tstart, tend; // 用于局部计时的结构体
     const long target_frame_ns = (long)(1.0 / FPS * 1e9);
 
     // // 初始化显示
@@ -99,7 +100,7 @@ int main() {
 
     // 初始化摄像头
     struct v4l2_capture cam = {0};
-    if ( v4l2_init( &cam, CAM_DEV, camera_width, camera_height, 8)) {
+    if ( v4l2_init( &cam, CAM_DEV, camera_width, camera_height, 4)) {
         fprintf(stderr, "V4L2初始化失败\n");
         mydisplay_destroy(&mydisp);
         return EXIT_FAILURE;
@@ -153,8 +154,9 @@ int main() {
     printf("按回车键退出程序\n");
     int t =0;
     while (1) {
-        clock_gettime(CLOCK_MONOTONIC, &start);
+        clock_gettime(CLOCK_MONOTONIC, &tstart);
         // 1、检查退出键
+        clock_gettime(CLOCK_MONOTONIC, &start);
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(STDIN_FILENO, &readfds);
@@ -165,10 +167,12 @@ int main() {
                 break;
             }
         }
+        clock_gettime(CLOCK_MONOTONIC, &end);
         printf("按键:%.3fms ", get_elapsed_ns(&start, &end) / 1000000.0 );
 
         // 2、获取帧数据
         //fprintf(stderr, "等待摄像头数据...\n");
+        clock_gettime(CLOCK_MONOTONIC, &start);
         struct v4l2_buffer buf;
         memset(&buf, 0, sizeof(buf));
         buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -182,9 +186,11 @@ int main() {
             break;
         }
         uint8_t *cam_data = (uint8_t*)cam.buffers[buf.index].start;
+        clock_gettime(CLOCK_MONOTONIC, &end);
         printf("取帧:%.3fms ", get_elapsed_ns(&start, &end) / 1000000.0 );
 
         // 5、线程识别
+        clock_gettime(CLOCK_MONOTONIC, &start);
         pthread_mutex_lock(&thread_data.mutex);  // 互斥锁
         if (thread_data.isready ) {
             // 复制帧到识别缓冲区
@@ -193,15 +199,22 @@ int main() {
             pthread_cond_signal(&thread_data.cond);  // 唤醒检测线程
         }
         pthread_mutex_unlock(&thread_data.mutex); // 释放锁
+        clock_gettime(CLOCK_MONOTONIC, &end);
         printf("线程:%.3fms ", get_elapsed_ns(&start, &end) / 1000000.0 );
 
         // 3、LCD显示处理
+        clock_gettime(CLOCK_MONOTONIC, &start);
         int frame_index = (mydisp.disp_buf_index + 1)%3; // 计算下一个缓冲区索引
         memcpy(mydisp.disp_buf[frame_index]->map, cam_data, 
                mydisp.width * mydisp.height * 3 / 2);
-                clock_gettime(CLOCK_MONOTONIC, &end);
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        printf("显示拷贝:%.3fms ", get_elapsed_ns(&start, &end) / 1000000.0 );
         display_update_buffer(mydisp.disp_buf[frame_index], 0, 0); 
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        printf("显示updatabuffer:%.3fms ", get_elapsed_ns(&start, &end) / 1000000.0 );
         int ret = display_commit(mydisp.disp);  
+        clock_gettime(CLOCK_MONOTONIC, &end);
+        printf("显示commit:%.3fms ", get_elapsed_ns(&start, &end) / 1000000.0 );
         if (ret < 0) {
             fprintf(stderr, "提交显示缓冲区失败: %d\n", ret);
             break;
@@ -211,26 +224,32 @@ int main() {
             display_wait_vsync(mydisp.disp);  // 等待垂直同步
             mydisp.disp_buf_index = frame_index;  // 更新当前显示缓冲区索引
         }
+        clock_gettime(CLOCK_MONOTONIC, &end);
         printf("显示:%.3fms ", get_elapsed_ns(&start, &end) / 1000000.0 );
         
 
         // 4、视频编码处理
+        clock_gettime(CLOCK_MONOTONIC, &start);
         // fprintf(stderr, "处理视频编码...\n");
         if (video_encoder_process(&enc, cam_data) != 0) {
             fprintf(stderr, "视频编码处理失败\n");
             break;
         }
+        clock_gettime(CLOCK_MONOTONIC, &end);
         printf("编码:%.3fms ", get_elapsed_ns(&start, &end) / 1000000.0 );
 
         // 6、重新入队缓冲区
+        clock_gettime(CLOCK_MONOTONIC, &start);
         if (ioctl(cam.fd, VIDIOC_QBUF, &buf) < 0) {
             perror("入队失败");
             break;
         }
+        clock_gettime(CLOCK_MONOTONIC, &end);
         printf("入队: %.3fms", get_elapsed_ns(&start, &end) / 1000000.0 );
 
-        clock_gettime(CLOCK_MONOTONIC, &end); 
-        long working_ns = get_elapsed_ns(&start, &end);// 执行部分耗时
+        clock_gettime(CLOCK_MONOTONIC, &tend); 
+        long working_ns = get_elapsed_ns(&tstart, &tend);// 执行部分耗时
+        printf("主线程工作耗时:%.3fms ", working_ns / 1000000.0 );
         long remaining_ns = target_frame_ns - working_ns;
         if( remaining_ns > 0){
             printf("进入休眠    ");
@@ -240,8 +259,8 @@ int main() {
             };
             nanosleep(&sleep_time, NULL);
         }
-        clock_gettime(CLOCK_MONOTONIC, &end);
-        printf("整个流程耗时: %.3f 毫秒，帧率：%.3f \n", get_elapsed_ns(&start, &end) / 1000000.0 , 1e9 / get_elapsed_ns(&start, &end));
+        clock_gettime(CLOCK_MONOTONIC, &tend);
+        printf("整个流程耗时: %.3f 毫秒，帧率：%.3f \n", get_elapsed_ns(&tstart, &tend) / 1000000.0 , 1e9 / get_elapsed_ns(&tstart, &tend));
     }
     // 清理线程
     pthread_mutex_lock(&thread_data.mutex);  // 

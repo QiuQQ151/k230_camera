@@ -59,6 +59,16 @@ int v4l2_init(struct v4l2_capture *vcap, const char *dev, uint32_t width, uint32
     vcap->pitch = fmt.fmt.pix.bytesperline;// 更新行步长，用于后期解码
     fprintf(stderr, "摄像头行步长: %u bytes\n", vcap->pitch);
 
+    // 有问题
+    struct v4l2_streamparm parm;
+    CLEAR(parm);
+    parm.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    parm.parm.capture.timeperframe.numerator = 1;  // 1/60秒
+    parm.parm.capture.timeperframe.denominator = 60;
+    if (ioctl(vcap->fd, VIDIOC_S_PARM, &parm) < 0) {
+        perror("设置60fps失败(WARN)"); // 非致命错误
+    }
+
     // 3、申请帧缓冲区
     struct v4l2_requestbuffers req; //
     CLEAR(req);
